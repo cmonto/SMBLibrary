@@ -86,7 +86,14 @@ namespace SMBLibrary.Server
                 int port = (m_transport == SMBTransportType.DirectTCPTransport ? DirectTCPPort : NetBiosOverTCPPort);
                 m_listenerSocket.Bind(new IPEndPoint(m_serverAddress, port));
                 m_listenerSocket.Listen((int)SocketOptionName.MaxConnections);
-                m_listenerSocket.BeginAccept(ConnectRequestCallback, m_listenerSocket);
+
+                SocketAsyncEventArgs ar = new SocketAsyncEventArgs();
+                ar.Completed += ConnectRequestCallback;
+                ar.UserToken = m_listenerSocket;
+                if(m_listenerSocket.AcceptAsync(ar) == false)
+                {
+                    ConnectRequestCallback(m_listenerSocket, ar);
+                }
 
                 if (connectionInactivityTimeout.HasValue)
                 {
@@ -108,42 +115,22 @@ namespace SMBLibrary.Server
         {
             Log(Severity.Information, "Stopping server");
             m_listening = false;
-            if (m_sendSMBKeepAliveThread != null)
-            {
-                m_sendSMBKeepAliveThread.Abort();
-            }
+            //m_listening == fasle should Abort this thread
+            //if (m_sendSMBKeepAliveThread != null)
+            //{
+            //    m_sendSMBKeepAliveThread.Abort();
+            //}
             SocketUtils.ReleaseSocket(m_listenerSocket);
             m_connectionManager.ReleaseAllConnections();
         }
 
         // This method accepts new connections
-        private void ConnectRequestCallback(IAsyncResult ar)
+        private void ConnectRequestCallback(object sender, SocketAsyncEventArgs ar)
         {
-            Socket listenerSocket = (Socket)ar.AsyncState;
+            Socket listenerSocket = (Socket)ar.UserToken;
 
-            Socket clientSocket;
-            try
-            {
-                clientSocket = listenerSocket.EndAccept(ar);
-            }
-            catch (ObjectDisposedException)
-            {
-                return;
-            }
-            catch (SocketException ex)
-            {
-                const int WSAECONNRESET = 10054; // The client may have closed the connection before we start to process the connection request.
-                const int WSAETIMEDOUT = 10060; // The client did not properly respond after a period of time.
-                // When we get WSAECONNRESET or WSAETIMEDOUT, we have to continue to accept other connection requests.
-                // See http://stackoverflow.com/questions/7704417/socket-endaccept-error-10054
-                if (ex.ErrorCode == WSAECONNRESET || ex.ErrorCode == WSAETIMEDOUT)
-                {
-                    listenerSocket.BeginAccept(ConnectRequestCallback, listenerSocket);
-                }
-                Log(Severity.Debug, "Connection request error {0}", ex.ErrorCode);
-                return;
-            }
-
+            Socket clientSocket = ar.AcceptSocket;
+            
             // Windows will set the TCP keepalive timeout to 120 seconds for an SMB connection
             SocketUtils.SetKeepAlive(clientSocket, TimeSpan.FromMinutes(2));
             // Disable the Nagle Algorithm for this tcp socket:
@@ -173,7 +160,14 @@ namespace SMBLibrary.Server
                 {
                     // Direct TCP transport packet is actually an NBT Session Message Packet,
                     // So in either case (NetBios over TCP or Direct TCP Transport) we will receive an NBT packet.
-                    clientSocket.BeginReceive(state.ReceiveBuffer.Buffer, state.ReceiveBuffer.WriteOffset, state.ReceiveBuffer.AvailableLength, 0, ReceiveCallback, state);
+                    SocketAsyncEventArgs args = new SocketAsyncEventArgs();
+                    args.SetBuffer(state.ReceiveBuffer.Buffer, state.ReceiveBuffer.WriteOffset, state.ReceiveBuffer.AvailableLength);
+                    args.Completed += ReceiveCallback;
+                    args.UserToken = state;
+                    if (!clientSocket.ReceiveAsync(args))
+                    {
+                        ReceiveCallback(clientSocket, args);
+                    }
                 }
                 catch (ObjectDisposedException)
                 {
@@ -185,27 +179,53 @@ namespace SMBLibrary.Server
             else
             {
                 Log(Severity.Verbose, "[{0}:{1}] New connection request rejected", clientEndPoint.Address, clientEndPoint.Port);
-                clientSocket.Close();
+                clientSocket.Dispose();
             }
 
-            listenerSocket.BeginAccept(ConnectRequestCallback, listenerSocket);
+            acceptConnection:
+            try
+            {
+                ar.AcceptSocket = null;
+                ar.UserToken = listenerSocket;
+                if (listenerSocket.AcceptAsync(ar) == false)
+                {
+                    ConnectRequestCallback(sender, ar);
+                }
+            }
+            catch (ObjectDisposedException)
+            {
+                return;
+            }
+            catch (SocketException ex)
+            {
+                ///const int WSAECONNRESET = 10054; // The client may have closed the connection before we start to process the connection request.
+                ///const int WSAETIMEDOUT = 10060; // The client did not properly respond after a period of time.
+                // When we get WSAECONNRESET or WSAETIMEDOUT, we have to continue to accept other connection requests.
+                // See http://stackoverflow.com/questions/7704417/socket-endaccept-error-10054
+                if (ex.SocketErrorCode == SocketError.ConnectionReset || ex.SocketErrorCode == SocketError.TimedOut)
+                {
+                    goto acceptConnection;
+                }
+                Log(Severity.Debug, "Connection request error {0}", ex.SocketErrorCode);
+                return;
+            }
         }
 
-        private void ReceiveCallback(IAsyncResult result)
+        private void ReceiveCallback(object sender, SocketAsyncEventArgs result)
         {
-            ConnectionState state = (ConnectionState)result.AsyncState;
+            ConnectionState state = (ConnectionState)result.UserToken;
             Socket clientSocket = state.ClientSocket;
 
             if (!m_listening)
             {
-                clientSocket.Close();
+                clientSocket.Dispose();
                 return;
             }
 
             int numberOfBytesReceived;
             try
             {
-                numberOfBytesReceived = clientSocket.EndReceive(result);
+                numberOfBytesReceived = result.BytesTransferred;
             }
             catch (ObjectDisposedException)
             {
@@ -215,14 +235,14 @@ namespace SMBLibrary.Server
             }
             catch (SocketException ex)
             {
-                const int WSAECONNRESET = 10054;
-                if (ex.ErrorCode == WSAECONNRESET)
+                ///const int WSAECONNRESET = 10054;
+                if (ex.SocketErrorCode == SocketError.ConnectionReset)
                 {
                     state.LogToServer(Severity.Debug, "The connection was forcibly closed by the remote host");
                 }
                 else
                 {
-                    state.LogToServer(Severity.Debug, "The connection was terminated, Socket error code: {0}", ex.ErrorCode);
+                    state.LogToServer(Severity.Debug, "The connection was terminated, Socket error code: {0}", ex.SocketErrorCode);
                 }
                 m_connectionManager.ReleaseConnection(state);
                 return;
@@ -244,7 +264,15 @@ namespace SMBLibrary.Server
             {
                 try
                 {
-                    clientSocket.BeginReceive(state.ReceiveBuffer.Buffer, state.ReceiveBuffer.WriteOffset, state.ReceiveBuffer.AvailableLength, 0, ReceiveCallback, state);
+                    SocketAsyncEventArgs args = new SocketAsyncEventArgs();
+                    args.SetBuffer(state.ReceiveBuffer.Buffer, state.ReceiveBuffer.WriteOffset, state.ReceiveBuffer.AvailableLength);
+                    args.Completed += ReceiveCallback;
+                    args.UserToken = state;
+                    //m_currentAsyncResult = 
+                    if (!clientSocket.ReceiveAsync(args))
+                    {
+                        ReceiveCallback(sender, args);
+                    }
                 }
                 catch (ObjectDisposedException)
                 {
@@ -271,7 +299,7 @@ namespace SMBLibrary.Server
                 }
                 catch (Exception ex)
                 {
-                    state.ClientSocket.Close();
+                    state.ClientSocket.Dispose();
                     state.LogToServer(Severity.Warning, "Rejected Invalid NetBIOS session packet: {0}", ex.Message);
                     break;
                 }
@@ -306,7 +334,7 @@ namespace SMBLibrary.Server
                     if (!acceptSMB1)
                     {
                         state.LogToServer(Severity.Verbose, "Rejected SMB1 message");
-                        state.ClientSocket.Close();
+                        state.ClientSocket.Dispose();
                         return;
                     }
 
@@ -318,7 +346,7 @@ namespace SMBLibrary.Server
                     catch (Exception ex)
                     {
                         state.LogToServer(Severity.Warning, "Invalid SMB1 message: " + ex.Message);
-                        state.ClientSocket.Close();
+                        state.ClientSocket.Dispose();
                         return;
                     }
                     state.LogToServer(Severity.Verbose, "SMB1 message received: {0} requests, First request: {1}, Packet length: {2}", message.Commands.Count, message.Commands[0].CommandName.ToString(), packet.Length);
@@ -348,7 +376,7 @@ namespace SMBLibrary.Server
                         // [MS-SMB2] 3.3.5.3.2 If the string is not present in the dialect list and the server does not implement SMB,
                         // the server MUST disconnect the connection [..] without sending a response.
                         state.LogToServer(Severity.Verbose, "Rejected SMB1 message");
-                        state.ClientSocket.Close();
+                        state.ClientSocket.Dispose();
                     }
                 }
                 else if (SMB2Header.IsValidSMB2Header(packet.Trailer))
@@ -356,7 +384,7 @@ namespace SMBLibrary.Server
                     if (!acceptSMB2)
                     {
                         state.LogToServer(Severity.Verbose, "Rejected SMB2 message");
-                        state.ClientSocket.Close();
+                        state.ClientSocket.Dispose();
                         return;
                     }
 
@@ -368,7 +396,7 @@ namespace SMBLibrary.Server
                     catch (Exception ex)
                     {
                         state.LogToServer(Severity.Warning, "Invalid SMB2 request chain: " + ex.Message);
-                        state.ClientSocket.Close();
+                        state.ClientSocket.Dispose();
                         return;
                     }
                     state.LogToServer(Severity.Verbose, "SMB2 request chain received: {0} requests, First request: {1}, Packet length: {2}", requestChain.Count, requestChain[0].CommandName.ToString(), packet.Length);
@@ -377,13 +405,13 @@ namespace SMBLibrary.Server
                 else
                 {
                     state.LogToServer(Severity.Warning, "Invalid SMB message");
-                    state.ClientSocket.Close();
+                    state.ClientSocket.Dispose();
                 }
             }
             else
             {
                 state.LogToServer(Severity.Warning, "Invalid NetBIOS packet");
-                state.ClientSocket.Close();
+                state.ClientSocket.Dispose();
                 return;
             }
         }

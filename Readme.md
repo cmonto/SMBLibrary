@@ -1,3 +1,7 @@
+About SMBLibrary.Std:
+=================
+SMBLibrary.Std is a port of TalAloni\SMBLibrary to .Net Standard >= 1.3 to enable the Library for modern .Net environments. All classes has been ported but focus is on the Client(s) rather than Server.
+
 About SMBLibrary:
 =================
 SMBLibrary is an open-source C# SMB 1.0/CIFS, SMB 2.0 and SMB 2.1 server and client implementation.  

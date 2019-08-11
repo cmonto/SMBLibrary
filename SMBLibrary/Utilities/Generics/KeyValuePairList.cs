@@ -111,4 +111,21 @@ namespace Utilities
             return new KeyValuePairList<TKey, TValue>(base.GetRange(index, count));
         }
     }
+
+#if NETSTANDARD1_3
+    //
+    // Summary:
+    //     Specifies the direction of a sort operation.
+    public enum ListSortDirection
+    {
+        //
+        // Summary:
+        //     Sorts in ascending order.
+        Ascending = 0,
+        //
+        // Summary:
+        //     Sorts in descending order.
+        Descending = 1
+    }
+#endif
 }

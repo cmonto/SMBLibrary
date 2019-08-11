@@ -66,8 +66,8 @@ namespace Utilities
                 sourceStream.Read(buffer, 0, buffer.Length);
                 destinationStream.Write(buffer, 0, buffer.Length);
             }
-            sourceStream.Close();
-            destinationStream.Close();
+            sourceStream.Dispose();
+            destinationStream.Dispose();
         }
 
         public virtual bool Exists(string path)

@@ -42,7 +42,7 @@ namespace Utilities
         protected override byte[] HashFinal()
         {
             byte[] hashBuffer = UInt32ToBigEndianBytes(~hash);
-            this.HashValue = hashBuffer;
+            //this.HashValue = hashBuffer;
             return hashBuffer;
         }
 

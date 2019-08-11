@@ -38,7 +38,7 @@ namespace Utilities
         /// </param>
         public static void For(int fromInclusive, int toExclusive, int chunkSize, ForDelegate forDelegate)
         {
-            int threadCount = Environment.ProcessorCount;
+            int threadCount = System.Environment.ProcessorCount;
             For(fromInclusive, toExclusive, chunkSize, threadCount, forDelegate);
         }
 

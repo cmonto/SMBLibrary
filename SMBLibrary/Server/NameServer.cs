@@ -10,8 +10,16 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using SMBLibrary.NetBios;
 using Utilities;
+
+#if NETSTANDARD1_3
+using Environment = Utilities.Environment;
+#else
+using Environment = System.Environment;
+#endif
+
 
 namespace SMBLibrary.Server
 {
@@ -52,23 +60,23 @@ namespace SMBLibrary.Server
                 m_listening = true;
 
                 m_client = new UdpClient(new IPEndPoint(m_serverAddress, NetBiosNameServicePort));
-                m_client.BeginReceive(ReceiveCallback, null);
+                m_client.ReceiveAsync().ContinueWith(ReceiveCallback, null);
 
                 ThreadStart threadStart = new ThreadStart(RegisterNetBIOSName);
                 Thread thread = new Thread(threadStart);
                 thread.Start();
             }
         }
-
+        
         public void Stop()
         {
             m_listening = false;
-            m_client.Close();
+            m_client.Dispose();
         }
 
-        private void ReceiveCallback(IAsyncResult result)
+        private void ReceiveCallback(Task<UdpReceiveResult> task, object arg)
         {
-            if (!m_listening)
+            if (!m_listening || task.IsCompleted == false)
             {
                 return;
             }
@@ -77,7 +85,7 @@ namespace SMBLibrary.Server
             byte[] buffer;
             try
             {
-                buffer = m_client.EndReceive(result, ref remoteEP);
+                buffer = task.Result.Buffer;
             }
             catch (ObjectDisposedException)
             {
@@ -119,7 +127,7 @@ namespace SMBLibrary.Server
                                 NameFlags nameFlags = new NameFlags();
                                 response.Addresses.Add(m_serverAddress.GetAddressBytes(), nameFlags);
                                 byte[] responseBytes = response.GetBytes();
-                                m_client.Send(responseBytes, responseBytes.Length, remoteEP);
+                                m_client.SendAsync(responseBytes, responseBytes.Length, remoteEP);
                             }
                         }
                         else // NBStat
@@ -139,7 +147,7 @@ namespace SMBLibrary.Server
                             byte[] responseBytes = response.GetBytes();
                             try
                             {
-                                m_client.Send(responseBytes, responseBytes.Length, remoteEP);
+                                m_client.SendAsync(responseBytes, responseBytes.Length, remoteEP);
                             }
                             catch (ObjectDisposedException)
                             {
@@ -151,7 +159,7 @@ namespace SMBLibrary.Server
 
             try
             {
-                m_client.BeginReceive(ReceiveCallback, null);
+                m_client.ReceiveAsync().ContinueWith(ReceiveCallback, null);
             }
             catch (ObjectDisposedException)
             {
@@ -181,7 +189,7 @@ namespace SMBLibrary.Server
             {
                 try
                 {
-                    m_client.Send(packet, packet.Length, broadcastEP);
+                    m_client.SendAsync(packet, packet.Length, broadcastEP).Wait();
                 }
                 catch (ObjectDisposedException)
                 {

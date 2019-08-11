@@ -46,7 +46,7 @@ namespace SMBLibrary
             FileHandle fileHandle = (FileHandle)handle;
             if (fileHandle.Stream != null)
             {
-                fileHandle.Stream.Close();
+                fileHandle.Stream.Dispose();
             }
             return NTStatus.STATUS_SUCCESS;
         }

@@ -45,7 +45,7 @@ namespace Utilities
                     try
                     {
                         socket.Shutdown(SocketShutdown.Both);
-                        socket.Disconnect(false);
+                        //socket.Disconnect(false);
                     }
                     catch (ObjectDisposedException)
                     {
@@ -56,7 +56,7 @@ namespace Utilities
                     }
                 }
                 // Closing socket closes the connection, and Close is a wrapper-method around Dispose.
-                socket.Close();
+                socket.Dispose();
             }
         }
     }

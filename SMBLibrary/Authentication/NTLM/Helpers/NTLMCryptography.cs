@@ -66,6 +66,24 @@ namespace SMBLibrary.Authentication.NTLM
             return DesEncrypt(key, plainText, 0, plainText.Length);
         }
 
+#if NETSTANDARD1_3
+        public static byte[] DesEncrypt(byte[] key, byte[] plainText, int inputOffset, int inputCount)
+        {
+            //TODO: This implementation is not tested
+            DES des = new DES(key);
+            byte[] clearText;
+            if(inputOffset != 0 || inputCount != plainText.Length)
+            {
+                clearText = new byte[inputCount];
+                Array.Copy(plainText, inputOffset, clearText, 0, inputCount);
+            }
+            else
+            {
+                clearText = plainText;
+            }
+            return des.Encrypt(clearText);
+        }
+#else
         public static byte[] DesEncrypt(byte[] key, byte[] plainText, int inputOffset, int inputCount)
         {
             ICryptoTransform encryptor = CreateWeakDesEncryptor(CipherMode.ECB, key, new byte[key.Length]);
@@ -84,7 +102,7 @@ namespace SMBLibrary.Authentication.NTLM
             ICryptoTransform trans = mi.Invoke(sm, Par) as ICryptoTransform;
             return trans;
         }
-
+#endif
         /// <summary>
         /// DESL()
         /// </summary>
@@ -123,7 +141,12 @@ namespace SMBLibrary.Authentication.NTLM
 
         public static Encoding GetOEMEncoding()
         {
+#if NETSTANDARD1_3
+            //0 for default encoding : https://docs.microsoft.com/en-us/dotnet/api/system.text.encoding.getencoding?redirectedfrom=MSDN&view=netframework-4.8#System_Text_Encoding_GetEncoding_System_Int32_
+            return Encoding.GetEncoding(0);
+#else
             return Encoding.GetEncoding(CultureInfo.CurrentCulture.TextInfo.OEMCodePage);
+#endif
         }
 
         /// <summary>

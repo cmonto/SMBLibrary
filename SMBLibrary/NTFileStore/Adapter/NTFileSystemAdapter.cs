@@ -210,7 +210,7 @@ namespace SMBLibrary
                             try
                             {
                                 Stream temp = m_fileSystem.OpenFile(path, FileMode.Truncate, FileAccess.ReadWrite, FileShare.ReadWrite, FileOptions.None);
-                                temp.Close();
+                                temp.Dispose();
                             }
                             catch (Exception ex)
                             {
@@ -346,7 +346,7 @@ namespace SMBLibrary
             if (fileHandle.Stream != null)
             {
                 Log(Severity.Verbose, "CloseFile: Closing '{0}'.", fileHandle.Path);
-                fileHandle.Stream.Close();
+                fileHandle.Stream.Dispose();
             }
 
             // If the file / directory was created with FILE_DELETE_ON_CLOSE but was not opened (with FileOptions.DeleteOnClose), we should delete it now.

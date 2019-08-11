@@ -70,7 +70,7 @@ namespace SMBLibrary
 
                 if (fileHandle.Stream != null)
                 {
-                    fileHandle.Stream.Close();
+                    fileHandle.Stream.Dispose();
                 }
 
                 // Note: it's possible that we just want to upcase / downcase a filename letter.
@@ -106,7 +106,7 @@ namespace SMBLibrary
                     // We're supposed to delete the file on close, but it's too late to report errors at this late stage
                     if (fileHandle.Stream != null)
                     {
-                        fileHandle.Stream.Close();
+                        fileHandle.Stream.Dispose();
                     }
 
                     try

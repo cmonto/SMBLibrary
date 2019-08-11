@@ -11,6 +11,12 @@ using SMBLibrary.Authentication.GSSAPI;
 using SMBLibrary.Authentication.NTLM;
 using Utilities;
 
+#if NETSTANDARD1_3
+using Environment = Utilities.Environment;
+#else
+using Environment = System.Environment;
+#endif
+
 namespace SMBLibrary.Client
 {
     public class NTLMAuthenticationHelper

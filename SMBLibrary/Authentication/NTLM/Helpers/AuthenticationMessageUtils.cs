@@ -16,7 +16,9 @@ namespace SMBLibrary.Authentication.NTLM
         public static string ReadAnsiStringBufferPointer(byte[] buffer, int offset)
         {
             byte[] bytes = ReadBufferPointer(buffer, offset);
-            return ASCIIEncoding.Default.GetString(bytes);
+            //On .NET Core, the Encoding.Default property always returns the UTF8Encoding. So use that instead of Encoding.Default static property.
+            //return ASCIIEncoding.Default.GetString(bytes);
+            return UTF8Encoding.UTF8.GetString(bytes);
         }
 
         public static string ReadUnicodeStringBufferPointer(byte[] buffer, int offset)

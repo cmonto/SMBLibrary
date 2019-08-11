@@ -24,8 +24,7 @@ namespace SMBLibrary
 
         public static int GetExceptionHResult(IOException ex)
         {
-            PropertyInfo hResult = ex.GetType().GetProperty("HResult", BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance);
-            return (int)hResult.GetValue(ex, null);
+            return ex.HResult;
         }
     }
 }

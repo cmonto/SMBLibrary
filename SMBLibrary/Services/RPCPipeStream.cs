@@ -85,9 +85,9 @@ namespace SMBLibrary.Services
         {
         }
 
-        public override void Close()
-        {
-        }
+        //public override void Close()
+        //{
+        //}
 
         public override long Seek(long offset, SeekOrigin origin)
         {

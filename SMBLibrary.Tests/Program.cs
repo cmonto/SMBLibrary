@@ -17,6 +17,9 @@ namespace SMBLibrary.Tests
             new SMB2SigningTests().TestAll();
 
             new NTDirectoryFileSystemTests().TestAll();
+
+            Console.WriteLine("Press any key to exit");
+            Console.ReadKey();
         }
     }
 }

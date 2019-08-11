@@ -463,7 +463,7 @@ namespace SMBLibrary.Win32
             }
 
             NTStatus status;
-            if (Environment.OSVersion.Version.Major >= 6)
+            if (System.Environment.OSVersion.Version.Major >= 6)
             {
                 IO_STATUS_BLOCK ioStatusBlock;
                 status = NtCancelSynchronousIoFile(threadHandle, IntPtr.Zero, out ioStatusBlock);

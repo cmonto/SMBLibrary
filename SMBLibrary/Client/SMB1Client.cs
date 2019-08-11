@@ -1,4 +1,4 @@
-/* Copyright (C) 2014-2019 Tal Aloni <tal.aloni.il@gmail.com>. All rights reserved.
+/* Copyright (C) 2014-2018 Tal Aloni <tal.aloni.il@gmail.com>. All rights reserved.
  * 
  * You can redistribute this program and/or modify it under the terms of
  * the GNU Lesser Public License as published by the Free Software Foundation,
@@ -15,6 +15,12 @@ using SMBLibrary.NetBios;
 using SMBLibrary.Services;
 using SMBLibrary.SMB1;
 using Utilities;
+
+#if NETSTANDARD1_3
+using Environment = Utilities.Environment;
+#else
+using Environment = System.Environment;
+#endif
 
 namespace SMBLibrary.Client
 {
@@ -86,11 +92,18 @@ namespace SMBLibrary.Client
 
                 ConnectionState state = new ConnectionState();
                 NBTConnectionReceiveBuffer buffer = state.ReceiveBuffer;
-                m_clientSocket.BeginReceive(buffer.Buffer, buffer.WriteOffset, buffer.AvailableLength, SocketFlags.None, new AsyncCallback(OnClientSocketReceive), state);
+                SocketAsyncEventArgs args = new SocketAsyncEventArgs();
+                args.SetBuffer(buffer.Buffer, buffer.WriteOffset, buffer.AvailableLength);
+                args.Completed += OnClientSocketReceive;
+                args.UserToken = state;
+                if (!m_clientSocket.ReceiveAsync(args))
+                {
+                    OnClientSocketReceive(m_clientSocket, args);
+                }
                 bool supportsDialect = NegotiateDialect(m_forceExtendedSecurity);
                 if (!supportsDialect)
                 {
-                    m_clientSocket.Close();
+                    m_clientSocket.Dispose();
                 }
                 else
                 {
@@ -104,7 +117,7 @@ namespace SMBLibrary.Client
         {
             if (m_isConnected)
             {
-                m_clientSocket.Disconnect(false);
+                m_clientSocket.Dispose();
                 m_isConnected = false;
             }
         }
@@ -355,9 +368,9 @@ namespace SMBLibrary.Client
             return null;
         }
 
-        private void OnClientSocketReceive(IAsyncResult ar)
+        private void OnClientSocketReceive(object sender, SocketAsyncEventArgs ar)
         {
-            ConnectionState state = (ConnectionState)ar.AsyncState;
+            ConnectionState state = (ConnectionState)ar.UserToken;
 
             if (!m_clientSocket.Connected)
             {
@@ -367,11 +380,7 @@ namespace SMBLibrary.Client
             int numberOfBytesReceived = 0;
             try
             {
-                numberOfBytesReceived = m_clientSocket.EndReceive(ar);
-            }
-            catch (ArgumentException) // The IAsyncResult object was not returned from the corresponding synchronous method on this class.
-            {
-                return;
+                numberOfBytesReceived = ar.BytesTransferred;
             }
             catch (ObjectDisposedException)
             {
@@ -396,7 +405,14 @@ namespace SMBLibrary.Client
 
                 try
                 {
-                    m_clientSocket.BeginReceive(buffer.Buffer, buffer.WriteOffset, buffer.AvailableLength, SocketFlags.None, new AsyncCallback(OnClientSocketReceive), state);
+                    SocketAsyncEventArgs args = new SocketAsyncEventArgs();
+                    args.SetBuffer(buffer.Buffer, buffer.WriteOffset, buffer.AvailableLength);
+                    args.Completed += OnClientSocketReceive;
+                    args.UserToken = state;
+                    if (!m_clientSocket.ReceiveAsync(ar))
+                    {
+                        OnClientSocketReceive(sender, ar);
+                    }
                 }
                 catch (ObjectDisposedException)
                 {
@@ -423,7 +439,7 @@ namespace SMBLibrary.Client
                 }
                 catch (Exception)
                 {
-                    m_clientSocket.Close();
+                    m_clientSocket.Dispose();
                     break;
                 }
 
@@ -445,7 +461,7 @@ namespace SMBLibrary.Client
             }
             else if (packet is NegativeSessionResponsePacket && m_transport == SMBTransportType.NetBiosOverTCP)
             {
-                m_clientSocket.Close();
+                m_clientSocket.Dispose();
                 m_isConnected = false;
             }
             else if (packet is SessionMessagePacket)
@@ -458,7 +474,7 @@ namespace SMBLibrary.Client
                 catch (Exception ex)
                 {
                     Log("Invalid SMB1 message: " + ex.Message);
-                    m_clientSocket.Close();
+                    m_clientSocket.Dispose();
                     m_isConnected = false;
                     return;
                 }
@@ -505,7 +521,7 @@ namespace SMBLibrary.Client
 
         private void Log(string message)
         {
-            System.Diagnostics.Debug.Print(message);
+            System.Diagnostics.Debug.WriteLine(message);
         }
 
         internal void TrySendMessage(SMB1Command request)

@@ -10,6 +10,12 @@ using System.Security.Cryptography;
 using SMBLibrary.Authentication.GSSAPI;
 using Utilities;
 
+#if NETSTANDARD1_3
+using Environment = Utilities.Environment;
+#else
+using Environment = System.Environment;
+#endif
+
 namespace SMBLibrary.Authentication.NTLM
 {
     /// <returns>null if the account does not exist</returns>

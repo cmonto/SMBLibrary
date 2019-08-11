@@ -10,6 +10,12 @@ using System.IO;
 using SMBLibrary.RPC;
 using SMBLibrary.Services;
 
+#if NETSTANDARD1_3
+using Environment = Utilities.Environment;
+#else
+using Environment = System.Environment;
+#endif
+
 namespace SMBLibrary.Server
 {
     public class NamedPipeShare : ISMBShare
