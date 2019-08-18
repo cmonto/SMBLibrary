@@ -10,7 +10,7 @@
   <PropertyGroup>
     <TargetFramework>netstandard1.3</TargetFramework>
     <PackageId>SMBLibrary.Std</PackageId>
-    <Authors>Visit Repo</Authors>
+    <Authors>Monto C</Authors>
     <Company>NA</Company>
     <Product>SMBLibrary.Std</Product>
     <Description>Free, Open Source, User-Mode SMB 1.0/CIFS, SMB 2.0 and SMB 2.1 Server &amp; Client Library for .Net Standard &gt;= 1.3</Description>
@@ -19,6 +19,7 @@
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
     <PackageLicenseFile></PackageLicenseFile>
     <PackageLicenseExpression>LGPL-3.0-or-later</PackageLicenseExpression>
+    <Version>1.1.0</Version>
   </PropertyGroup>
 
   <ItemGroup>

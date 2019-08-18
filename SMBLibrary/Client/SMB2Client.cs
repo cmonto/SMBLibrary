@@ -37,7 +37,8 @@ namespace SMBLibrary.Client
         private List<SMB2Command> m_incomingQueue = new List<SMB2Command>();
         private EventWaitHandle m_incomingQueueEventHandle = new EventWaitHandle(false, EventResetMode.AutoReset);
 
-        private uint m_messageID = 0;
+        private int m_timeout = 60000;
+        private ulong m_messageID = 0;
         private SMB2Dialect m_dialect;
         private bool m_signingRequired;
         private uint m_maxTransactSize;
@@ -117,8 +118,8 @@ namespace SMBLibrary.Client
             request.Dialects.Add(SMB2Dialect.SMB202);
             request.Dialects.Add(SMB2Dialect.SMB210);
 
-            TrySendCommand(request);
-            NegotiateResponse response = WaitForCommand(SMB2CommandName.Negotiate) as NegotiateResponse;
+            ulong messageId = TrySendCommand(request);
+            NegotiateResponse response = WaitForCommand(SMB2CommandName.Negotiate, messageId) as NegotiateResponse;
             if (response != null && response.Header.Status == NTStatus.STATUS_SUCCESS)
             {
                 m_dialect = response.DialectRevision;
@@ -153,8 +154,8 @@ namespace SMBLibrary.Client
             SessionSetupRequest request = new SessionSetupRequest();
             request.SecurityMode = SecurityMode.SigningEnabled;
             request.SecurityBuffer = negotiateMessage;
-            TrySendCommand(request);
-            SMB2Command response = WaitForCommand(SMB2CommandName.SessionSetup);
+            ulong messageId = TrySendCommand(request);
+            SMB2Command response = WaitForCommand(SMB2CommandName.SessionSetup, messageId);
             if (response != null)
             {
                 if (response.Header.Status == NTStatus.STATUS_MORE_PROCESSING_REQUIRED && response is SessionSetupResponse)
@@ -169,8 +170,8 @@ namespace SMBLibrary.Client
                     request = new SessionSetupRequest();
                     request.SecurityMode = SecurityMode.SigningEnabled;
                     request.SecurityBuffer = authenticateMessage;
-                    TrySendCommand(request);
-                    response = WaitForCommand(SMB2CommandName.SessionSetup);
+                    messageId = TrySendCommand(request);
+                    response = WaitForCommand(SMB2CommandName.SessionSetup, messageId);
                     if (response != null)
                     {
                         m_isLoggedIn = (response.Header.Status == NTStatus.STATUS_SUCCESS);
@@ -193,9 +194,9 @@ namespace SMBLibrary.Client
             }
 
             LogoffRequest request = new LogoffRequest();
-            TrySendCommand(request);
+            ulong messageId = TrySendCommand(request);
 
-            SMB2Command response = WaitForCommand(SMB2CommandName.Logoff);
+            SMB2Command response = WaitForCommand(SMB2CommandName.Logoff, messageId);
             if (response != null)
             {
                 m_isLoggedIn = (response.Header.Status != NTStatus.STATUS_SUCCESS);
@@ -233,8 +234,8 @@ namespace SMBLibrary.Client
             string sharePath = String.Format(@"\\{0}\{1}", serverIPAddress.ToString(), shareName);
             TreeConnectRequest request = new TreeConnectRequest();
             request.Path = sharePath;
-            TrySendCommand(request);
-            SMB2Command response = WaitForCommand(SMB2CommandName.TreeConnect);
+            ulong messageId = TrySendCommand(request);
+            SMB2Command response = WaitForCommand(SMB2CommandName.TreeConnect, messageId);
             if (response != null)
             {
                 status = response.Header.Status;
@@ -377,9 +378,21 @@ namespace SMBLibrary.Client
             }
         }
 
-        internal SMB2Command WaitForCommand(SMB2CommandName commandName)
+        public int TimeOut
         {
-            const int TimeOut = 5000;
+            get { return m_timeout; }
+            set
+            {
+                if(m_isConnected)
+                {
+                    throw new InvalidOperationException("Timeout can not be changed after connection");
+                }
+                m_timeout = value;
+            }
+        }
+
+        internal SMB2Command WaitForCommand(SMB2CommandName commandName, ulong messageId)
+        {
             Stopwatch stopwatch = new Stopwatch();
             stopwatch.Start();
             while (stopwatch.ElapsedMilliseconds < TimeOut)
@@ -390,9 +403,13 @@ namespace SMBLibrary.Client
                     {
                         SMB2Command command = m_incomingQueue[index];
 
-                        if (command.CommandName == commandName)
+                        if (command.CommandName == commandName && command.Header.MessageID == messageId)
                         {
                             m_incomingQueue.RemoveAt(index);
+                            if(command.Header.Status == NTStatus.STATUS_PENDING)
+                            {
+                                break;
+                            }
                             return command;
                         }
                     }
@@ -407,25 +424,23 @@ namespace SMBLibrary.Client
             System.Diagnostics.Debug.WriteLine(message);
         }
 
-        internal void TrySendCommand(SMB2Command request)
+        private ulong NextMessageID
         {
-            request.Header.Credits = 1;
-            request.Header.MessageID = m_messageID;
-            request.Header.SessionID = m_sessionID;
-            if (m_signingRequired)
+            get
             {
-                request.Header.IsSigned = (m_sessionID != 0 && (request.CommandName == SMB2CommandName.TreeConnect || request.Header.TreeID != 0));
-                if (request.Header.IsSigned)
+                lock (this)
                 {
-                    request.Header.Signature = new byte[16]; // Request could be reused
-                    byte[] buffer = request.GetBytes();
-                    byte[] signature = new HMACSHA256(m_sessionKey).ComputeHash(buffer, 0, buffer.Length);
-                    // [MS-SMB2] The first 16 bytes of the hash MUST be copied into the 16-byte signature field of the SMB2 Header.
-                    request.Header.Signature = ByteReader.ReadBytes(signature, 0, 16);
+                    return m_messageID++;
                 }
             }
-            TrySendCommand(m_clientSocket, request);
-            m_messageID++;
+        }
+
+        internal ulong TrySendCommand(SMB2Command request)
+        {
+            request.Header.Credits = 1;
+            request.Header.MessageID = NextMessageID;
+            request.Header.SessionID = m_sessionID;
+            return TrySendCommand(m_clientSocket, request);
         }
 
         public uint MaxTransactSize
@@ -452,18 +467,25 @@ namespace SMBLibrary.Client
             }
         }
 
-        public static void TrySendCommand(Socket socket, SMB2Command request)
+        public static ulong TrySendCommand(Socket socket, SMB2Command request)
         {
+            ulong ret = 0;
             SessionMessagePacket packet = new SessionMessagePacket();
             packet.Trailer = request.GetBytes();
-            TrySendPacket(socket, packet);
+            if (TrySendPacket(socket, packet))
+            {
+                ret = request.Header.MessageID;
+            }
+            return ret;
         }
 
-        public static void TrySendPacket(Socket socket, SessionPacket packet)
+        public static bool TrySendPacket(Socket socket, SessionPacket packet)
         {
+            bool success = false;
             try
             {
                 socket.Send(packet.GetBytes());
+                success = true;
             }
             catch (SocketException)
             {
@@ -471,6 +493,7 @@ namespace SMBLibrary.Client
             catch (ObjectDisposedException)
             {
             }
+            return success;
         }
     }
 }
