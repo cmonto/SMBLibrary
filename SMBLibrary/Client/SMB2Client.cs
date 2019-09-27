@@ -24,6 +24,8 @@ namespace SMBLibrary.Client
         public const int NetBiosOverTCPPort = 139;
         public const int DirectTCPPort = 445;
 
+        public const int IncomingQueueTimeoutMillis = 50;
+
         public const uint ClientMaxTransactSize = 65536;
         public const uint ClientMaxReadSize = 65536;
         public const uint ClientMaxWriteSize = 65536;
@@ -32,13 +34,14 @@ namespace SMBLibrary.Client
         private bool m_isConnected;
         private bool m_isLoggedIn;
         private Socket m_clientSocket;
-        
+
         private object m_incomingQueueLock = new object();
         private List<SMB2Command> m_incomingQueue = new List<SMB2Command>();
         private EventWaitHandle m_incomingQueueEventHandle = new EventWaitHandle(false, EventResetMode.AutoReset);
 
         private int m_timeout = 60000;
         private ulong m_messageID = 0;
+        private ushort m_credits = 1;
         private SMB2Dialect m_dialect;
         private bool m_signingRequired;
         private uint m_maxTransactSize;
@@ -83,7 +86,7 @@ namespace SMBLibrary.Client
                 args.SetBuffer(buffer.Buffer, buffer.WriteOffset, buffer.AvailableLength);
                 args.Completed += OnClientSocketReceive;
                 args.UserToken = state;
-                if(!m_clientSocket.ReceiveAsync(args))
+                if (!m_clientSocket.ReceiveAsync(args))
                 {
                     OnClientSocketReceive(m_clientSocket, args);
                 }
@@ -288,12 +291,9 @@ namespace SMBLibrary.Client
 
                 try
                 {
-                    SocketAsyncEventArgs args = new SocketAsyncEventArgs();
-                    args.SetBuffer(buffer.Buffer, buffer.WriteOffset, buffer.AvailableLength);
-                    args.Completed += OnClientSocketReceive;
-                    args.UserToken = state;
-                    //m_currentAsyncResult = 
-                    if(!m_clientSocket.ReceiveAsync(ar))
+                    ar.SetBuffer(buffer.Buffer, buffer.WriteOffset, buffer.AvailableLength);
+
+                    if (!m_clientSocket.ReceiveAsync(ar))
                     {
                         OnClientSocketReceive(sender, ar);
                     }
@@ -371,6 +371,9 @@ namespace SMBLibrary.Client
                 {
                     lock (m_incomingQueueLock)
                     {
+                        m_credits += command.Header.Credits;
+                        Log("[ProcessPacket] CreditsResponse:" + m_credits);
+
                         m_incomingQueue.Add(command);
                         m_incomingQueueEventHandle.Set();
                     }
@@ -383,7 +386,7 @@ namespace SMBLibrary.Client
             get { return m_timeout; }
             set
             {
-                if(m_isConnected)
+                if (m_isConnected)
                 {
                     throw new InvalidOperationException("Timeout can not be changed after connection");
                 }
@@ -395,26 +398,33 @@ namespace SMBLibrary.Client
         {
             Stopwatch stopwatch = new Stopwatch();
             stopwatch.Start();
-            while (stopwatch.ElapsedMilliseconds < TimeOut)
+            try
             {
-                lock (m_incomingQueueLock)
+                while (stopwatch.ElapsedMilliseconds < TimeOut)
                 {
-                    for (int index = 0; index < m_incomingQueue.Count; index++)
+                    lock (m_incomingQueueLock)
                     {
-                        SMB2Command command = m_incomingQueue[index];
-
-                        if (command.CommandName == commandName && command.Header.MessageID == messageId)
+                        for (int index = 0; index < m_incomingQueue.Count; index++)
                         {
-                            m_incomingQueue.RemoveAt(index);
-                            if(command.Header.Status == NTStatus.STATUS_PENDING)
+                            SMB2Command command = m_incomingQueue[index];
+
+                            if (command.CommandName == commandName && command.Header.MessageID == messageId)
                             {
-                                break;
+                                m_incomingQueue.RemoveAt(index);
+                                if (command.Header.Status == NTStatus.STATUS_PENDING)
+                                {
+                                    break;
+                                }
+                                return command;
                             }
-                            return command;
                         }
                     }
+                    m_incomingQueueEventHandle.WaitOne(IncomingQueueTimeoutMillis);
                 }
-                m_incomingQueueEventHandle.WaitOne(100);
+            }
+            finally
+            {
+                stopwatch.Stop();
             }
             return null;
         }
@@ -437,10 +447,39 @@ namespace SMBLibrary.Client
 
         internal ulong TrySendCommand(SMB2Command request)
         {
-            request.Header.Credits = 1;
+            request.Header.Credits = WaitForCredits(1);
             request.Header.MessageID = NextMessageID;
             request.Header.SessionID = m_sessionID;
+            request.Header.CreditCharge = 1;
+
             return TrySendCommand(m_clientSocket, request);
+        }
+
+        private ushort WaitForCredits(ushort desiredCredits = 1)
+        {
+            Stopwatch stopwatch = new Stopwatch();
+            stopwatch.Start();
+            try
+            {
+                while (stopwatch.ElapsedMilliseconds < TimeOut)
+                {
+                    lock (m_incomingQueueLock)
+                    {
+                        if (m_credits >= desiredCredits)
+                        {
+                            m_credits -= desiredCredits;
+                            Log("[WaitForCredits] CreditsAvailable:" + m_credits + " Consumed:" + desiredCredits);
+                            return desiredCredits;
+                        }
+                    }
+                    m_incomingQueueEventHandle.WaitOne(IncomingQueueTimeoutMillis);
+                }
+            }
+            finally
+            {
+                stopwatch.Stop();
+            }
+            throw new TimeoutException("Timeout waiting for desired Credits");
         }
 
         public uint MaxTransactSize
